@@ -1,0 +1,16 @@
+{
+  "name": "RESITER SGA",
+  "short_name": "SGA",
+  "description": "Sistema de Gestión de Activos - RESITER",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#1e40af",
+  "icons": [
+    {
+      "src": "https://cdn-icons-png.flaticon.com/512/3100/3100204.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}

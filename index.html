@@ -1,0 +1,1814 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SGA - Sistema de Gestión de Activos</title>
+
+    <!-- Librerías -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.3.0/exceljs.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
+
+    <!-- Firebase SDK (v9 compat) -->
+    <script src="https://www.gstatic.com/firebasejs/9.17.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.17.1/firebase-storage-compat.js"></script>
+
+    <!-- Supabase SDK -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f8fafc;
+        }
+
+        .sidebar-active {
+            background-color: #e0f2fe;
+            color: #0284c7;
+            border-right: 3px solid #0284c7;
+        }
+
+        .sidebar-item {
+            color: #64748b;
+            transition: all 0.2s;
+        }
+
+        .sidebar-item:hover {
+            color: #0f172a;
+            background-color: #f1f5f9;
+        }
+
+        .attendance-cell {
+            cursor: pointer;
+            user-select: none;
+            transition: all 0.1s;
+        }
+
+        .attendance-cell:hover {
+            filter: brightness(0.95);
+        }
+
+        [v-cloak] {
+            display: none;
+        }
+    </style>
+</head>
+
+<body>
+
+    <!-- RECOVERY OVERLAY -->
+    <div id="recovery-overlay"
+        class="fixed inset-0 bg-slate-900/90 z-[9999] flex flex-col items-center justify-center text-white hidden">
+        <div class="text-4xl mb-4 animate-spin text-blue-500"><i class="fas fa-satellite-dish"></i></div>
+        <h2 class="text-2xl font-bold">Escaneando Datos Antiguos...</h2>
+        <p class="text-slate-400 mt-2">Buscando en todas las memorias disponibles</p>
+        <ul id="scan-log" class="mt-4 text-xs font-mono text-green-400 text-left space-y-1 opacity-80"></ul>
+        <button id="close-recovery" onclick="document.getElementById('recovery-overlay').style.display='none'"
+            class="mt-8 bg-slate-700 px-6 py-2 rounded-full text-sm font-bold hover:bg-slate-600 hidden">Cerrar y
+            Continuar</button>
+    </div>
+
+    <div id="app" class="flex h-screen overflow-hidden text-sm" v-cloak>
+
+        <!-- SIDEBAR -->
+        <aside class="w-64 bg-white border-r border-gray-200 flex flex-col hidden md:flex shrink-0 z-20 shadow-lg">
+            <div class="h-16 flex items-center px-6 border-b border-gray-100">
+                <div
+                    class="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center text-white font-bold text-xl mr-3 shadow-blue-500/30 shadow-lg">
+                    R</div>
+                <div>
+                    <h1 class="font-bold text-gray-800 text-lg tracking-tight">RESITER</h1>
+                    <p class="text-[10px] text-gray-400 -mt-1 tracking-widest uppercase font-semibold">Ecosistema</p>
+                </div>
+            </div>
+
+            <nav class="flex-1 p-4 space-y-2 overflow-y-auto">
+                <a href="#" @click="currentTab = 'dashboard'"
+                    :class="currentTab === 'dashboard' ? 'sidebar-active' : 'sidebar-item'"
+                    class="flex items-center px-4 py-3 rounded-lg font-medium">
+                    <i class="fas fa-chart-pie w-6 opacity-70"></i> Dashboard
+                </a>
+                <a href="#" @click="currentTab = 'inventory'"
+                    :class="currentTab === 'inventory' ? 'sidebar-active' : 'sidebar-item'"
+                    class="flex items-center px-4 py-3 rounded-lg font-medium">
+                    <i class="fas fa-boxes-stacked w-6 opacity-70"></i> Inventario
+                </a>
+                <a href="#" @click="currentTab = 'staff'"
+                    :class="currentTab === 'staff' ? 'sidebar-active' : 'sidebar-item'"
+                    class="flex items-center px-4 py-3 rounded-lg font-medium">
+                    <i class="fas fa-users w-6 opacity-70"></i> Gestión de Personal
+                </a>
+                <a href="#" @click="currentTab = 'projects'"
+                    :class="currentTab === 'projects' ? 'sidebar-active' : 'sidebar-item'"
+                    class="flex items-center px-4 py-3 rounded-lg font-medium">
+                    <i class="fas fa-handshake w-6 opacity-70"></i> Proyectos
+                </a>
+            </nav>
+
+            <div class="p-4 bg-slate-50 border-t border-slate-200">
+                <button @click="forceDeepScan" class="w-full text-xs text-blue-600 font-bold hover:underline mb-2">
+                    <i class="fas fa-search mr-1"></i> Buscar Datos Perdidos
+                </button>
+                <button
+                    class="flex items-center text-red-500 font-medium hover:bg-red-50 w-full px-4 py-3 rounded-lg transition text-xs">
+                    <i class="fas fa-power-off w-6"></i> Cerrar Sesión
+                </button>
+            </div>
+        </aside>
+
+        <!-- MAIN AREA -->
+        <main class="flex-1 flex flex-col min-w-0 bg-slate-50/50">
+            <!-- Header -->
+            <header class="h-16 bg-white border-b flex items-center justify-between px-6 shrink-0 shadow-sm z-10">
+                <div class="flex items-center">
+                    <button class="md:hidden mr-4" @click="toggleSidebar"><i
+                            class="fas fa-bars text-xl text-gray-600"></i></button>
+                    <h2 class="text-lg font-bold text-gray-800 capitalize">{{ pageTitle }}</h2>
+                </div>
+                <div v-if="recoveryCount > 0"
+                    class="bg-green-100 text-green-800 px-3 py-1 rounded-full text-xs font-bold animate-pulse">
+                    <i class="fas fa-check-circle mr-1"></i> Se restauraron {{ recoveryCount }} items
+                </div>
+            </header>
+
+            <div class="flex-1 overflow-auto p-6 md:p-8">
+
+                <!-- DASHBOARD -->
+                <div v-if="currentTab === 'dashboard'" class="max-w-7xl mx-auto space-y-8">
+                    <div class="grid grid-cols-1 md:grid-cols-4 gap-6">
+                        <div
+                            class="bg-white p-6 rounded-2xl shadow-[0_2px_10px_-3px_rgba(6,81,237,0.1)] border border-gray-100">
+                            <p class="text-gray-500 text-xs font-bold uppercase mb-2">Personal</p>
+                            <h3 class="text-3xl font-bold text-gray-800">{{ staff.length }}</h3>
+                        </div>
+                        <div
+                            class="bg-white p-6 rounded-2xl shadow-[0_2px_10px_-3px_rgba(6,81,237,0.1)] border border-gray-100">
+                            <p class="text-gray-500 text-xs font-bold uppercase mb-2">Proyectos</p>
+                            <h3 class="text-3xl font-bold text-blue-600">{{ projects.length }}</h3>
+                        </div>
+                        <div
+                            class="bg-white p-6 rounded-2xl shadow-[0_2px_10px_-3px_rgba(6,81,237,0.1)] border border-gray-100">
+                            <p class="text-gray-500 text-xs font-bold uppercase mb-2">Activos</p>
+                            <h3 class="text-3xl font-bold text-orange-600">{{ assets.length }}</h3>
+                        </div>
+                    </div>
+
+                    <div class="mt-8">
+                        <div class="flex justify-between items-center mb-4">
+                            <h3 class="text-lg font-bold text-gray-800">Mis Proyectos</h3>
+                            <button @click="currentTab='projects'"
+                                class="text-blue-600 text-xs font-bold hover:underline">Ver Todo</button>
+                        </div>
+                        <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                            <div v-for="p in projects" :key="p.id" @click="openProjectModal(p)"
+                                class="bg-white p-6 rounded-2xl border border-gray-100 shadow-sm hover:shadow-md cursor-pointer transition">
+                                <h4 class="font-bold text-lg text-gray-800 mb-1">{{ p.nombre }}</h4>
+                                <p class="text-gray-400 text-xs">{{ p.cliente || 'Cliente General' }}</p>
+                                <div class="mt-4 flex gap-4 text-xs text-gray-500 font-bold">
+                                    <span>{{ getStaffCount(p.id) }} Personal</span>
+                                    <span>{{ getAssetCount(p.id) }} Activos</span>
+                                </div>
+                            </div>
+
+                            <div class="bg-slate-100 p-6 rounded-2xl border border-slate-200 border-dashed flex flex-col items-center justify-center cursor-pointer hover:bg-slate-200 transition"
+                                @click="openAddProjectModal">
+                                <i class="fas fa-plus text-slate-400 text-2xl mb-2"></i>
+                                <span class="text-slate-500 font-bold text-xs">Crear Proyecto</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- STAFF VIEW -->
+                <div v-if="currentTab === 'staff'" class="max-w-7xl mx-auto space-y-6">
+                    <div class="flex justify-between items-center">
+                        <h3 class="text-2xl font-bold text-gray-800">
+                            Directorio
+                            <span class="text-sm font-normal text-gray-500 ml-2">({{ staff.length }} registros)</span>
+                        </h3>
+                        <button @click="openAddStaffModal"
+                            class="bg-blue-600 text-white px-5 py-2.5 rounded-xl font-bold text-sm shadow hover:bg-blue-700">
+                            <i class="fas fa-user-plus mr-2"></i> Nuevo
+                        </button>
+                    </div>
+
+                    <div class="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
+                        <table class="w-full text-left">
+                            <thead class="bg-gray-50 text-gray-500 font-bold uppercase text-[10px]">
+                                <tr>
+                                    <th class="p-4">Nombre</th>
+                                    <th class="p-4">Cargo</th>
+                                    <th class="p-4">Estado (Tiempo Real)</th>
+                                    <th class="p-4">Ubicación</th>
+                                    <th class="p-4 text-center">Documentos</th>
+                                    <th class="p-4 text-center">Acciones</th>
+                                </tr>
+                            </thead>
+                            <tbody class="divide-y divide-gray-100">
+                                <tr v-for="s in staff" :key="s.id" class="hover:bg-gray-50">
+                                    <td class="p-4 cursor-pointer group" @click="openBalanceModal(s)">
+                                        <div class="font-bold text-gray-800 group-hover:text-blue-600 transition">{{
+                                            s.nombre }}</div>
+                                    </td>
+                                    <td class="p-4 text-xs text-gray-600">{{ s.cargo }}</td>
+                                    <td class="p-4">
+                                        <!-- Dynamic Status Card -->
+                                        <div class="flex flex-col gap-1 items-start">
+                                            <span :class="getLaborStatus(s).color"
+                                                class="px-2 py-1 rounded text-[10px] font-bold border border-opacity-20 uppercase w-fit">
+                                                {{ getLaborStatus(s).text }}
+                                            </span>
+                                            <span class="text-[10px] font-mono text-gray-500 font-bold ml-1">
+                                                {{ getNextRosterChange(s) }}
+                                            </span>
+                                        </div>
+                                    </td>
+                                    <td class="p-4">
+                                        <select v-model="s.projectId" @change="save"
+                                            class="bg-blue-50 text-blue-700 text-[10px] font-bold px-2 py-1 rounded border border-transparent hover:border-blue-200 outline-none w-full max-w-[150px]">
+                                            <option value="">-- Sin Asignar --</option>
+                                            <option v-for="p in projects" :key="p.id" :value="p.id">{{ p.nombre }}
+                                            </option>
+                                        </select>
+                                    </td>
+                                    <td class="p-4 text-center">
+                                        <div v-if="s.fileUrl" class="flex flex-col items-center gap-1">
+                                            <button @click="downloadFile(s)"
+                                                class="w-full inline-flex items-center justify-center gap-1 px-3 py-1 bg-green-50 text-green-600 rounded-lg text-[10px] font-bold hover:bg-green-100 transition border border-green-100"
+                                                title="Descargar Documento">
+                                                <i class="fas fa-download"></i> DESCARGAR
+                                            </button>
+                                            <div class="flex gap-1 w-full mt-1">
+                                                <button @click="openEditStaffModal(s)"
+                                                    class="flex-1 inline-flex items-center justify-center gap-1 px-2 py-1 bg-blue-50 text-blue-600 rounded-lg text-[9px] font-bold hover:bg-blue-100 transition border border-blue-100"
+                                                    title="Reemplazar Documento">
+                                                    <i class="fas fa-sync"></i> CAMBIAR
+                                                </button>
+                                                <button @click="deleteFile(s)"
+                                                    class="inline-flex items-center justify-center p-1 bg-red-50 text-red-600 rounded-lg text-[9px] font-bold hover:bg-red-100 transition border border-red-100 aspect-square"
+                                                    title="Eliminar Documento">
+                                                    <i class="fas fa-trash-alt"></i>
+                                                </button>
+                                            </div>
+                                        </div>
+                                        <button v-else @click="openEditStaffModal(s)"
+                                            class="inline-flex items-center gap-1 px-3 py-1 bg-orange-50 text-orange-600 rounded-lg text-[10px] font-bold hover:bg-orange-100 transition border border-orange-100">
+                                            <i class="fas fa-plus"></i> + SUBIR PDF
+                                        </button>
+                                    </td>
+                                    <td class="p-4 text-center flex justify-center gap-2">
+                                        <button @click="deleteStaff(s.id)"
+                                            class="text-gray-300 hover:text-red-500 bg-gray-50 w-8 h-8 rounded-full flex items-center justify-center transition"><i
+                                                class="fas fa-trash"></i></button>
+                                        <button @click="openBalanceModal(s)"
+                                            class="text-blue-500 hover:text-blue-700 bg-blue-50 w-8 h-8 rounded-full flex items-center justify-center transition shadow-sm"
+                                            title="Ver Calendario y Balance"><i
+                                                class="fas fa-calendar-alt"></i></button>
+                                    </td>
+                                </tr>
+                                <tr v-if="staff.length === 0">
+                                    <td colspan="6" class="p-8 text-center text-gray-400 italic">No hay registros
+                                        visibles. <a href="#" @click="forceDeepScan"
+                                            class="text-blue-600 font-bold underline">Intentar recuperación
+                                            profunda.</a></td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- PROJECTS LIST -->
+                <div v-if="currentTab === 'projects'" class="max-w-7xl mx-auto space-y-6">
+                    <div class="flex justify-between items-center">
+                        <h3 class="text-2xl font-bold text-gray-800">Todos los Proyectos</h3>
+                        <button @click="openAddProjectModal"
+                            class="bg-blue-600 text-white px-5 py-2 rounded-xl font-bold">Nuevo</button>
+                    </div>
+                    <!-- Optimized List -->
+                    <div class="space-y-4">
+                        <div v-for="p in projects" :key="p.id"
+                            class="flex items-center justify-between bg-white p-4 rounded-xl border border-gray-200 shadow-sm">
+                            <div>
+                                <h4 class="font-bold text-gray-800">{{ p.nombre }}</h4>
+                                <p class="text-xs text-gray-500">{{ p.cliente }}</p>
+                                <span
+                                    class="text-[10px] font-bold bg-blue-50 text-blue-600 px-2 py-0.5 rounded-full mt-1 inline-block border border-blue-100">
+                                    📦 {{ getAssetCount(p.id) }} Activos Asignados
+                                </span>
+                            </div>
+                            <div class="flex items-center gap-2">
+                                <button @click="openProjectModal(p)"
+                                    class="px-4 py-2 bg-blue-50 text-blue-600 rounded-lg text-xs font-bold hover:bg-blue-100">Gestionar</button>
+                                <button @click="openEditProjectModal(p)"
+                                    class="p-2 text-gray-300 hover:text-blue-500"><i
+                                        class="fas fa-pencil-alt"></i></button>
+                                <button @click="deleteProject(p.id)" class="p-2 text-gray-300 hover:text-red-500"><i
+                                        class="fas fa-trash"></i></button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- INVENTORY -->
+                <div v-if="currentTab === 'inventory'" class="max-w-7xl mx-auto space-y-6">
+                    <div class="flex justify-between items-center">
+                        <h3 class="text-2xl font-bold text-gray-800">Inventario</h3>
+                        <button @click="openAddAssetModal"
+                            class="bg-orange-600 text-white px-5 py-2 rounded-xl font-bold">AGREGAR ACTIVO</button>
+                    </div>
+                    <!-- TABLE 1: WAREHOUSE -->
+                    <div class="bg-white rounded-2xl shadow-sm border border-gray-200 mb-8">
+                        <div
+                            class="p-4 border-b border-gray-100 flex justify-between items-center bg-gray-50/50 rounded-t-2xl">
+                            <h4 class="font-bold text-gray-700 flex items-center gap-2">
+                                <i class="fas fa-warehouse text-gray-400"></i> Stock en Almacén Central
+                            </h4>
+                            <span class="text-xs font-bold text-gray-400 bg-gray-100 px-2 py-1 rounded-lg">{{
+                                assets.filter(a => !a.projectId).length }} items</span>
+                        </div>
+                        <table class="w-full text-left">
+                            <thead class="bg-gray-50 text-gray-500 font-bold uppercase text-[10px]">
+                                <tr>
+                                    <th class="p-4">Activo</th>
+                                    <th class="p-4">Tipo</th>
+                                    <th class="p-4">Cod</th>
+                                    <th class="p-4">Estado</th>
+                                    <th class="p-4"></th>
+                                </tr>
+                            </thead>
+                            <tbody class="divide-y divide-gray-100">
+                                <tr v-for="a in assets.filter(a => !a.projectId)" :key="a.id">
+                                    <td class="p-4 font-bold text-gray-800">{{ a.nombre }}</td>
+                                    <td class="p-4">
+                                        <span
+                                            class="px-2 py-1 rounded text-[10px] font-bold border border-gray-200 bg-gray-50 text-gray-600 uppercase">{{
+                                            a.categoria || 'Var' }}</span>
+                                    </td>
+                                    <td class="p-4 text-xs">{{ a.codigo }}</td>
+                                    <td class="p-4">
+                                        <span class="text-green-600 font-bold text-[10px]">🟢 DISPONIBLE</span>
+                                    </td>
+                                    <td class="p-4 text-right">
+                                        <button @click="openEditAssetModal(a)"
+                                            class="text-blue-400 hover:text-blue-600 mr-3"><i
+                                                class="fas fa-pencil-alt"></i></button>
+                                        <button @click="deleteAsset(a.id)" class="text-gray-300 hover:text-red-500"><i
+                                                class="fas fa-trash"></i></button>
+                                    </td>
+                                </tr>
+                                <tr v-if="assets.filter(a => !a.projectId).length === 0">
+                                    <td colspan="5" class="p-8 text-center text-gray-400 italic">No hay activos en
+                                        almacén.</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <!-- TABLE 2: DEPLOYED -->
+                    <div class="bg-white rounded-2xl shadow-sm border border-gray-200">
+                        <div
+                            class="p-4 border-b border-gray-100 flex justify-between items-center bg-blue-50/30 rounded-t-2xl">
+                            <h4 class="font-bold text-blue-800 flex items-center gap-2">
+                                <i class="fas fa-truck-loading text-blue-500"></i> Activos en Operaciones / Proyectos
+                            </h4>
+                            <span class="text-xs font-bold text-blue-600 bg-blue-100 px-2 py-1 rounded-lg">{{
+                                assets.filter(a => a.projectId).length }} items</span>
+                        </div>
+                        <table class="w-full text-left">
+                            <thead class="bg-gray-50 text-gray-500 font-bold uppercase text-[10px]">
+                                <tr>
+                                    <th class="p-4">Activo</th>
+                                    <th class="p-4">Tipo</th>
+                                    <th class="p-4">Ubicación Actual</th>
+                                    <th class="p-4">Cod</th>
+                                    <th class="p-4">Estado</th>
+                                    <th class="p-4"></th>
+                                </tr>
+                            </thead>
+                            <tbody class="divide-y divide-gray-100">
+                                <tr v-for="a in assets.filter(a => a.projectId)" :key="a.id">
+                                    <td class="p-4 font-bold text-gray-800">{{ a.nombre }}</td>
+                                    <td class="p-4">
+                                        <span
+                                            class="px-2 py-1 rounded text-[10px] font-bold border border-gray-200 bg-gray-50 text-gray-600 uppercase">{{
+                                            a.categoria || 'Var' }}</span>
+                                    </td>
+                                    <td class="p-4">
+                                        <span
+                                            class="px-2 py-1 rounded-full text-[10px] font-bold bg-blue-50 text-blue-600 border border-blue-100">
+                                            🏗️ {{ getProjectName(a.projectId) }}
+                                        </span>
+                                    </td>
+                                    <td class="p-4 text-xs">{{ a.codigo }}</td>
+                                    <td class="p-4">
+                                        <span v-if="a.estado==='Disponible'"
+                                            class="text-green-600 font-bold text-[10px] uppercase">● Disponible</span>
+                                        <span v-else-if="a.estado==='En Uso'"
+                                            class="text-orange-500 font-bold text-[10px] uppercase">● En Uso</span>
+                                        <span v-else class="text-red-500 font-bold text-[10px] uppercase">● {{ a.estado
+                                            }}</span>
+                                    </td>
+                                    <td class="p-4 text-right">
+                                        <button @click="openEditAssetModal(a)"
+                                            class="text-blue-400 hover:text-blue-600 mr-3"><i
+                                                class="fas fa-pencil-alt"></i></button>
+                                        <button @click="deleteAsset(a.id)" class="text-gray-300 hover:text-red-500"><i
+                                                class="fas fa-trash"></i></button>
+                                    </td>
+                                </tr>
+                                <tr v-if="assets.filter(a => a.projectId).length === 0">
+                                    <td colspan="6" class="p-8 text-center text-gray-400 italic">No hay activos
+                                        asignados a proyectos.</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+            </div>
+        </main>
+
+        <!-- PROJECT MODAL -->
+        <div v-if="showProjectModal && selectedProject"
+            class="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+            <div class="bg-white w-full max-w-[95vw] h-[90vh] rounded-3xl shadow-2xl flex flex-col overflow-hidden">
+                <!-- Header with Progress -->
+                <div class="bg-slate-900 text-white p-6 shrink-0">
+                    <div class="flex justify-between items-start mb-4">
+                        <div>
+                            <h2 class="text-3xl font-bold">{{ selectedProject.nombre }}</h2>
+                            <p class="text-slate-400 text-sm">{{ selectedProject.cliente }} • {{
+                                selectedProject.tipoService }}</p>
+                        </div>
+                        <button @click="showProjectModal=false"><i
+                                class="fas fa-times text-xl text-slate-400 hover:text-white"></i></button>
+                    </div>
+                    <!-- Progress Bar -->
+                    <div class="space-y-2">
+                        <div class="flex justify-between text-xs font-bold uppercase tracking-wider text-slate-400">
+                            <span>Avance General del Proyecto</span>
+                            <span>{{ projectProgress }}%</span>
+                        </div>
+                        <div class="h-4 bg-slate-700/50 rounded-full overflow-hidden border border-slate-700">
+                            <div class="h-full bg-gradient-to-r from-blue-500 to-cyan-400 transition-all duration-1000"
+                                :style="{width: projectProgress + '%'}"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="flex border-b px-6 bg-white shrink-0">
+                    <button @click="projectTab='planning'"
+                        :class="projectTab==='planning'?'text-blue-600 border-blue-600':'text-gray-500 border-transparent'"
+                        class="px-6 py-4 border-b-2 font-bold transition flex items-center gap-2">
+                        <i class="fas fa-tasks"></i> Planificación
+                    </button>
+                    <button @click="projectTab='crew'"
+                        :class="projectTab==='crew'?'text-blue-600 border-blue-600':'text-gray-500 border-transparent'"
+                        class="px-6 py-4 border-b-2 font-bold transition flex items-center gap-2">
+                        <i class="fas fa-users-cog"></i> Gestión de Cuadrilla
+                    </button>
+                    <button @click="projectTab='assets'"
+                        :class="projectTab==='assets'?'text-blue-600 border-blue-600':'text-gray-500 border-transparent'"
+                        class="px-6 py-4 border-b-2 font-bold transition flex items-center gap-2">
+                        <i class="fas fa-box-open"></i> Logística
+                    </button>
+                </div>
+                <!-- Logic for Logistics Tab Visibility is controlled by projectTab variable -->
+                <div class="flex-1 overflow-auto bg-slate-50 p-6">
+
+                    <!-- TAB 1: PLANNING -->
+                    <div v-if="projectTab==='planning'" class="space-y-4">
+                        <div class="flex justify-between items-center">
+                            <h4 class="font-bold text-gray-700">Hitos y Actividades Clave</h4>
+                            <button @click="addActivity"
+                                class="text-xs bg-blue-100 text-blue-700 px-3 py-1 rounded-lg font-bold hover:bg-blue-200">
+                                + Agregar Hito
+                            </button>
+                        </div>
+                        <div class="bg-white rounded-xl shadow-sm border overflow-hidden">
+                            <table class="w-full text-xs text-left">
+                                <thead class="bg-gray-50 text-gray-500 font-bold uppercase">
+                                    <tr>
+                                        <th class="p-3">Actividad</th>
+                                        <th class="p-3 w-32">Inicio</th>
+                                        <th class="p-3 w-32">Fin</th>
+                                        <th class="p-3 w-32">Estado</th>
+                                        <th class="p-3 w-24 text-center">% Avance</th>
+                                        <th class="p-3 w-10"></th>
+                                    </tr>
+                                </thead>
+                                <tbody class="divide-y">
+                                    <tr v-for="(act, idx) in selectedProject.activities || []" :key="idx">
+                                        <td class="p-2"><input v-model="act.name" @change="saveProject"
+                                                placeholder="Descripción..." class="w-full outline-none font-medium">
+                                        </td>
+                                        <td class="p-2"><input type="date" v-model="act.start" @change="saveProject"
+                                                class="w-full outline-none text-gray-500"></td>
+                                        <td class="p-2"><input type="date" v-model="act.end" @change="saveProject"
+                                                class="w-full outline-none text-gray-500"></td>
+                                        <td class="p-2">
+                                            <select v-model="act.status" @change="saveProject"
+                                                class="w-full outline-none bg-transparent font-bold"
+                                                :class="{'text-gray-400': act.status==='Pendiente', 'text-blue-600': act.status==='En Proceso', 'text-green-600': act.status==='Completado'}">
+                                                <option value="Pendiente">Pendiente</option>
+                                                <option value="En Proceso">En Proceso</option>
+                                                <option value="Completado">Completado</option>
+                                            </select>
+                                        </td>
+                                        <td class="p-2 text-center">
+                                            <input type="number" min="0" max="100" v-model="act.progress"
+                                                @change="saveProject"
+                                                class="w-full text-center outline-none font-bold text-blue-600 border-b border-transparent focus:border-blue-500">
+                                        </td>
+                                        <td class="p-2 text-center">
+                                            <button @click="removeActivity(idx)"
+                                                class="text-red-300 hover:text-red-500"><i
+                                                    class="fas fa-times"></i></button>
+                                        </td>
+                                    </tr>
+                                    <tr v-if="(!selectedProject.activities || selectedProject.activities.length === 0)">
+                                        <td colspan="6" class="p-6 text-center text-gray-400 italic">No hay actividades
+                                            planificadas.</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- TAB 2: CREW MANAGEMENT (ROSTER) -->
+                    <div v-if="projectTab==='crew'" class="space-y-4">
+                        <div class="flex gap-4 h-full">
+                            <!-- Lista con Status Real -->
+                            <div class="flex-1 bg-white rounded-xl shadow-sm border overflow-hidden flex flex-col">
+                                <div
+                                    class="p-4 border-b bg-gray-50 font-bold text-gray-700 flex justify-between items-center">
+                                    <span>Personal Asignado</span>
+                                    <div class="flex items-center gap-2">
+                                        <select v-model="filterStatus"
+                                            class="text-[10px] bg-white border border-gray-200 rounded-lg px-2 py-1 outline-none text-gray-600 focus:border-blue-500">
+                                            <option value="todos">Todos</option>
+                                            <option value="en_mina">En Mina</option>
+                                            <option value="descanso">En Descanso</option>
+                                            <option value="disponible">Disponible</option>
+                                        </select>
+                                        <span class="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded-lg">{{
+                                            filteredStaff.length }} Pax</span>
+                                    </div>
+                                </div>
+                                <div class="overflow-auto flex-1">
+                                    <table class="w-full text-left">
+                                        <thead
+                                            class="bg-white text-gray-500 font-bold uppercase text-[10px] sticky top-0 z-10 border-b">
+                                            <tr>
+                                                <th class="p-3">Nombre / Cargo</th>
+                                                <th class="p-3">Régimen</th>
+                                                <th class="p-3">Situación Actual (Hoy)</th>
+                                                <th class="p-3">Próximo Cambio</th>
+                                                <th class="p-3 text-center">Acción</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody class="divide-y">
+                                            <tr v-for="s in filteredStaff" :key="s.id" class="hover:bg-gray-50">
+                                                <td class="p-3 cursor-pointer group" @click="openBalanceModal(s)">
+                                                    <div
+                                                        class="font-bold text-gray-800 text-xs group-hover:text-blue-600 transition">
+                                                        {{ s.nombre }}</div>
+                                                    <div class="text-[10px] text-gray-500">{{ s.cargo }}</div>
+                                                </td>
+                                                <td class="p-3">
+                                                    <select v-model="s.regimen" @change="save"
+                                                        class="text-xs bg-transparent border-b border-dashed border-gray-300 outline-none pb-0.5 w-full">
+                                                        <option value="Lima 48h">Lima 48h</option>
+                                                        <option value="Mina 2x1">Mina 2x1</option>
+                                                        <option value="Sistema 14x7">Sistema 14x7 (Legado)</option>
+                                                    </select>
+                                                </td>
+                                                <td class="p-3">
+                                                    <span :class="getLaborStatus(s).color" @click="openBalanceModal(s)"
+                                                        class="px-2 py-1 rounded text-[10px] font-bold uppercase border border-opacity-20 block w-fit cursor-pointer hover:opacity-80 transition">
+                                                        {{ getLaborStatus(s).text }}
+                                                    </span>
+                                                </td>
+                                                <td class="p-3 text-xs font-mono text-gray-600 flex items-center gap-2">
+                                                    <span>{{ getNextRosterChange(s) }}</span>
+                                                    <i class="fas fa-pencil-alt text-gray-300 hover:text-blue-500 cursor-pointer text-[10px]"
+                                                        @click.stop="editBalance(s)" title="Ajuste Manual"></i>
+                                                </td>
+                                                <td class="p-3 text-center">
+                                                    <button @click="() => { s.projectId=''; save(); }"
+                                                        class="text-red-400 hover:text-red-600 text-xs border border-red-200 px-2 py-1 rounded hover:bg-red-50">Desasignar</button>
+                                                </td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+
+                            <!-- Selector Rapido -->
+                            <div class="w-80 bg-white rounded-xl shadow-sm border flex flex-col">
+                                <div class="p-4 border-b bg-gray-50 font-bold text-gray-700">Agregar Personal</div>
+                                <div class="overflow-auto flex-1 p-2">
+                                    <div v-for="s in staff.filter(x => x.projectId !== selectedProject.id)" :key="s.id"
+                                        class="p-3 border-b hover:bg-blue-50 cursor-pointer flex justify-between items-center group"
+                                        @click="() => { s.projectId = selectedProject.id; save(); }">
+                                        <div>
+                                            <div class="font-bold text-xs text-gray-700">{{ s.nombre }}</div>
+                                            <div class="text-[10px] text-gray-400">{{ s.cargo }}</div>
+                                        </div>
+                                        <i class="fas fa-plus-circle text-gray-300 group-hover:text-blue-500"></i>
+                                    </div>
+                                    <div v-if="staff.filter(x => x.projectId !== selectedProject.id).length === 0"
+                                        class="p-4 text-center text-xs text-gray-400">
+                                        No hay personal disponible.
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- TAB 3: LOGISTICS (ASSETS) -->
+                    <div v-if="projectTab==='assets'" class="space-y-4">
+                        <div class="bg-white rounded-xl shadow-sm border overflow-hidden">
+                            <div
+                                class="p-4 border-b bg-gray-50 font-bold text-gray-700 flex justify-between items-center">
+                                <span>Activos Asignados</span>
+                                <span class="bg-blue-100 text-blue-700 px-2 py-1 rounded-lg text-xs">{{
+                                    projectAssets.length }} Equipos</span>
+                            </div>
+                            <table class="w-full text-left">
+                                <thead class="bg-gray-50 text-gray-500 font-bold uppercase text-[10px]">
+                                    <tr>
+                                        <th class="p-4">Item / Activo</th>
+                                        <th class="p-4">Código</th>
+                                        <th class="p-4">Estado Operativo</th>
+                                        <th class="p-4 text-center">Acciones</th>
+                                    </tr>
+                                </thead>
+                                <tbody class="divide-y divide-gray-100">
+                                    <tr v-for="a in projectAssets" :key="a.id">
+                                        <td class="p-4 font-bold text-gray-800">{{ a.nombre }}</td>
+                                        <td class="p-4 text-xs font-mono text-gray-500">{{ a.codigo }}</td>
+                                        <td class="p-4">
+                                            <select v-model="a.estado" @change="updateAssetStatus(a)"
+                                                class="text-xs font-bold p-2 rounded border bg-white focus:ring-2 focus:ring-blue-500 outline-none w-full max-w-[150px]"
+                                                :class="{
+                                                    'text-green-600 border-green-200 bg-green-50': a.estado==='Disponible' || a.estado==='Operativo',
+                                                    'text-orange-500 border-orange-200 bg-orange-50': a.estado==='En Uso' || a.estado==='En Stand-by',
+                                                    'text-red-600 border-red-200 bg-red-50': a.estado==='En Mantenimiento' || a.estado==='Inoperativo'
+                                                }">
+                                                <option value="Disponible">🟢 Operativo</option>
+                                                <option value="En Uso">🟠 En Uso</option>
+                                                <option value="En Stand-by">🟡 En Stand-by</option>
+                                                <option value="En Mantenimiento">🔴 En Mantenimiento</option>
+                                                <option value="Inoperativo">☠️ Inoperativo</option>
+                                            </select>
+                                        </td>
+                                        <td class="p-4 text-center">
+                                            <button @click="returnToWarehouse(a)"
+                                                class="group relative inline-flex items-center justify-center px-4 py-2 bg-red-50 text-red-600 border border-red-100 rounded-lg text-xs font-bold hover:bg-red-100 transition overflow-hidden">
+                                                <span class="mr-2"><i class="fas fa-undo"></i></span>
+                                                Devolver
+                                            </button>
+                                        </td>
+                                    </tr>
+                                    <tr v-if="projectAssets.length === 0">
+                                        <td colspan="4"
+                                            class="p-12 text-center text-gray-400 flex flex-col items-center gap-2">
+                                            <i class="fas fa-truck-loading text-4xl mb-2 opacity-20"></i>
+                                            <span class="font-medium">No hay equipos asignados a este proyecto
+                                                actualmente.</span>
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- CALENDAR & BALANCE MODAL -->
+        <div v-if="showBalanceModal"
+            class="fixed inset-0 bg-black/60 z-[70] flex items-center justify-center p-4 backdrop-blur-sm">
+            <div class="bg-white w-full max-w-4xl rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+                <!-- Title Bar -->
+                <div class="bg-slate-900 p-6 flex justify-between items-center text-white shrink-0">
+                    <div>
+                        <h2 class="text-2xl font-bold">{{ selectedStaffForBalance?.nombre }}</h2>
+                        <p class="text-slate-400 text-xs uppercase tracking-widest">{{ selectedStaffForBalance?.cargo }}
+                            • {{ selectedStaffForBalance?.regimen }}</p>
+                    </div>
+                    <div class="flex items-center gap-4">
+                        <div class="text-right">
+                            <p class="text-[10px] uppercase text-slate-400 font-bold">Días Adeudados</p>
+                            <p class="text-3xl font-bold"
+                                :class="balanceValue >= 0 ? 'text-green-400' : 'text-red-400'">{{ balanceValue }}</p>
+                        </div>
+                        <button @click="closeBalanceModal"
+                            class="bg-slate-800 p-2 rounded-full hover:bg-slate-700 transition"><i
+                                class="fas fa-times"></i></button>
+                    </div>
+                </div>
+
+                <!-- Controls & Range Input -->
+                <div class="p-4 border-b bg-gray-50 flex flex-wrap gap-4 justify-between items-center shrink-0">
+                    <!-- Navigation -->
+                    <div class="flex items-center gap-2 bg-white px-3 py-1 rounded-xl border shadow-sm">
+                        <button @click="changeMonth(-1)"
+                            class="w-8 h-8 flex items-center justify-center rounded-full hover:bg-gray-100"><i
+                                class="fas fa-chevron-left"></i></button>
+                        <span class="font-bold text-gray-700 w-32 text-center select-none">{{ monthName }} {{
+                            currentYear }}</span>
+                        <button @click="changeMonth(1)"
+                            class="w-8 h-8 flex items-center justify-center rounded-full hover:bg-gray-100"><i
+                                class="fas fa-chevron-right"></i></button>
+                    </div>
+
+                    <!-- Bulk Add -->
+                    <div class="flex items-center gap-2">
+                        <div class="flex flex-col">
+                            <label class="text-[10px] font-bold text-gray-400 ml-1">DESDE</label>
+                            <input type="date" v-model="rangeStart"
+                                class="p-2 rounded-lg border text-xs font-bold outline-none focus:ring-2 focus:ring-blue-500">
+                        </div>
+                        <div class="flex flex-col">
+                            <label class="text-[10px] font-bold text-gray-400 ml-1">HASTA</label>
+                            <input type="date" v-model="rangeEnd"
+                                class="p-2 rounded-lg border text-xs font-bold outline-none focus:ring-2 focus:ring-blue-500">
+                        </div>
+                        <div class="flex flex-col">
+                            <label class="text-[10px] font-bold text-gray-400 ml-1 opacity-0">Acción</label>
+                            <div class="flex gap-1">
+                                <button @click="applyRange('X')"
+                                    class="bg-blue-600 text-white px-4 py-2 rounded-lg font-bold text-xs hover:bg-blue-700 shadow-sm"
+                                    title="Marcar como Trabajo">
+                                    + TRABAJO
+                                </button>
+                                <button @click="applyRange('D')"
+                                    class="bg-green-600 text-white px-4 py-2 rounded-lg font-bold text-xs hover:bg-green-700 shadow-sm"
+                                    title="Marcar como Descanso">
+                                    + DESCANSO
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Calendar Grid -->
+                <div class="flex-1 overflow-auto p-6 bg-slate-50">
+                    <div class="grid grid-cols-7 gap-1 mb-2">
+                        <div v-for="d in ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom']"
+                            class="text-center text-xs font-bold text-gray-400 uppercase py-2">{{ d }}</div>
+                    </div>
+                    <div class="grid grid-cols-7 gap-2">
+                        <div v-for="(day, i) in calendarDays" :key="i"
+                            class="min-h-[80px] bg-white rounded-xl border p-2 relative flex flex-col justify-between transition hover:shadow-md cursor-pointer group"
+                            :class="{'opacity-40 bg-gray-50': !day.isCurrentMonth, 'border-purple-200 bg-purple-50': day.isHoliday}"
+                            @click="toggleDayStatus(day)">
+
+                            <div class="flex justify-between items-start">
+                                <span class="text-xs font-bold"
+                                    :class="day.isHoliday ? 'text-purple-600' : 'text-gray-700'">{{ day.day }}</span>
+                                <span v-if="day.isHoliday"
+                                    class="text-[8px] bg-purple-100 text-purple-700 px-1 rounded uppercase font-bold tracking-tighter max-w-[50px] truncate">{{
+                                    day.holidayName }}</span>
+                            </div>
+
+                            <!-- Status Badge -->
+                            <div v-if="day.status" class="self-end">
+                                <span v-if="day.status === 'X'"
+                                    class="bg-blue-100 text-blue-700 px-2 py-1 rounded-md text-xs font-bold shadow-sm">TRABAJO</span>
+                                <span v-if="day.status === 'D'"
+                                    class="bg-green-100 text-green-700 px-2 py-1 rounded-md text-xs font-bold shadow-sm">DESCANSO</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- R.A.I. FLOATING CHAT -->
+        <!-- Chat Button -->
+        <button @click="toggleChat"
+            class="fixed bottom-6 right-6 w-16 h-16 bg-gradient-to-r from-indigo-600 to-purple-600 rounded-full shadow-2xl z-40 flex items-center justify-center text-white hover:scale-110 transition-transform duration-300 border-4 border-white">
+            <i class="fas fa-robot text-2xl"></i>
+        </button>
+
+        <!-- Chat Window -->
+        <div v-if="showChat"
+            class="fixed bottom-24 right-6 w-96 h-[500px] bg-white rounded-2xl shadow-2xl z-40 flex flex-col overflow-hidden border border-gray-100 font-sans">
+            <!-- Header -->
+            <div
+                class="bg-gradient-to-r from-indigo-600 to-purple-600 p-4 flex justify-between items-center text-white shrink-0">
+                <div class="flex items-center gap-2">
+                    <i class="fas fa-robot"></i>
+                    <h3 class="font-bold">R.A.I. <span
+                            class="text-[10px] opacity-70 bg-white/20 px-2 py-0.5 rounded-full">Assistant</span></h3>
+                </div>
+                <div class="flex gap-2">
+                    <button @click="showConfig=true" class="hover:text-indigo-200"><i class="fas fa-cog"></i></button>
+                    <button @click="showChat=false" class="hover:text-indigo-200"><i class="fas fa-times"></i></button>
+                </div>
+            </div>
+
+            <!-- Configuration Overlay -->
+            <div v-if="showConfig"
+                class="absolute inset-0 bg-white/95 z-50 flex flex-col justify-center p-6 text-center">
+                <h4 class="font-bold text-gray-800 mb-2">Configurar IA</h4>
+                <p class="text-xs text-gray-500 mb-1">Tu API Key de Google Gemini</p>
+                <input v-model="apiKey" type="password" placeholder="Pegar Key Aquí..."
+                    class="w-full p-3 border rounded-xl mb-3 text-xs bg-gray-50">
+
+                <p class="text-xs text-gray-500 mb-1">Modelo de IA ({{ availableModels.length }} encontrados)</p>
+                <div class="flex gap-2 items-center mb-4">
+                    <select v-model="selectedModel"
+                        class="flex-1 p-3 border rounded-xl text-xs bg-gray-50 outline-none focus:ring-2 focus:ring-indigo-500">
+                        <option v-for="m in availableModels" :key="m.id" :value="m.id">{{ m.name }}</option>
+                    </select>
+                    <button @click="fetchAvailableModels"
+                        class="p-3 bg-indigo-100 text-indigo-600 rounded-xl hover:bg-indigo-200 transition"
+                        title="Cargar Modelos Conectados">
+                        <i class="fas fa-sync-alt"></i>
+                    </button>
+                </div>
+
+                <button @click="saveApiKey" class="w-full bg-indigo-600 text-white py-2 rounded-xl font-bold">Guardar
+                    Configuración</button>
+                <button @click="showConfig=false" class="mt-4 text-xs text-gray-400 underline">Cancelar</button>
+            </div>
+
+            <!-- Messages Area -->
+            <div id="chat-box" class="flex-1 overflow-y-auto p-4 space-y-4 bg-slate-50">
+                <div v-for="(msg, i) in messages" :key="i" class="flex flex-col animate-fade-in"
+                    :class="msg.role==='user'?'items-end':'items-start'">
+                    <div class="max-w-[85%] p-3 rounded-2xl text-xs shadow-sm"
+                        :class="msg.role==='user'?'bg-indigo-600 text-white rounded-br-none':'bg-white text-gray-700 border border-gray-100 rounded-bl-none'">
+                        <p>{{ msg.text }}</p>
+                    </div>
+                    <span class="text-[9px] text-gray-300 mt-1 px-1">{{ msg.role==='user'?'Tú':'R.A.I.' }}</span>
+                </div>
+                <div v-if="isThinking" class="flex items-start">
+                    <div class="bg-white p-3 rounded-2xl rounded-bl-none border border-gray-100 shadow-sm flex gap-1">
+                        <div class="w-1.5 h-1.5 bg-indigo-400 rounded-full animate-bounce"></div>
+                        <div class="w-1.5 h-1.5 bg-indigo-400 rounded-full animate-bounce delay-75"></div>
+                        <div class="w-1.5 h-1.5 bg-indigo-400 rounded-full animate-bounce delay-150"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Input Area -->
+            <div class="p-3 bg-white border-t flex gap-2 shrink-0">
+                <input v-model="chatInput" @keyup.enter="sendToGemini" placeholder="Pregúntame algo..."
+                    class="flex-1 bg-gray-100 rounded-xl px-4 text-xs outline-none focus:ring-2 focus:ring-indigo-500 transition">
+                <button @click="sendToGemini"
+                    class="w-10 h-10 bg-indigo-600 rounded-xl text-white shadow-lg hover:scale-105 transition">
+                    <i class="fas fa-paper-plane"></i>
+                </button>
+            </div>
+        </div>
+
+        <!-- SHARED MODALS -->
+        <div v-if="showGenericModal" class="fixed inset-0 bg-black/60 z-[60] flex items-center justify-center p-4">
+            <div class="bg-white w-full max-w-md rounded-2xl p-6 shadow-xl">
+                <h3 class="font-bold text-lg mb-4">{{ modalInfo.title }}</h3>
+                <div class="space-y-3">
+                    <!-- FORMULARIO DE ACTIVOS -->
+                    <div v-if="modalInfo.type === 'asset'" class="space-y-3">
+                        <div>
+                            <label class="block text-xs font-bold text-gray-500 uppercase mb-1">Nombre del
+                                Activo</label>
+                            <input v-model="modalData.nombre"
+                                class="w-full p-3 border rounded-xl bg-gray-50 font-bold text-gray-800 focus:ring-2 focus:ring-blue-500 outline-none"
+                                placeholder="Ej: Bomba Sumergible">
+                        </div>
+
+                        <div>
+                            <label class="block text-xs font-bold text-gray-500 uppercase mb-1">Código / Serie</label>
+                            <input v-model="modalData.codigo"
+                                class="w-full p-3 border rounded-xl bg-gray-50 focus:ring-2 focus:ring-blue-500 outline-none"
+                                placeholder="Ej: B-001">
+                        </div>
+
+                        <div class="grid grid-cols-2 gap-3">
+                            <div>
+                                <label class="block text-xs font-bold text-gray-500 uppercase mb-1">Proyecto
+                                    Asignado</label>
+                                <select v-model="modalData.projectId"
+                                    class="w-full p-3 border rounded-xl bg-white focus:ring-2 focus:ring-blue-500 outline-none">
+                                    <option value="">-- 🏢 Almacén Central --</option>
+                                    <option v-for="p in projects" :key="p.id" :value="p.id">{{ p.nombre }}</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="block text-xs font-bold text-gray-500 uppercase mb-1">Estado</label>
+                                <select v-model="modalData.estado"
+                                    class="w-full p-3 border rounded-xl bg-white focus:ring-2 focus:ring-blue-500 outline-none">
+                                    <option value="Disponible">Disponible</option>
+                                    <option value="En Uso">En Uso</option>
+                                    <option value="En Mantenimiento">En Mantenimiento</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- FORMULARIO DE PROYECTOS (MEJORADO) -->
+                    <div v-else-if="modalInfo.type === 'project'" class="space-y-3">
+                        <div class="grid grid-cols-2 gap-3">
+                            <div>
+                                <label class="block text-xs font-bold text-gray-500 uppercase mb-1">Nombre
+                                    Proyecto</label>
+                                <input v-model="modalData.nombre"
+                                    class="w-full p-3 border rounded-xl bg-gray-50 font-bold focus:ring-2 focus:ring-blue-500 outline-none"
+                                    placeholder="Ej: Planta Desalinizadora">
+                            </div>
+                            <div>
+                                <label class="block text-xs font-bold text-gray-500 uppercase mb-1">Cliente</label>
+                                <input v-model="modalData.cliente"
+                                    class="w-full p-3 border rounded-xl bg-white focus:ring-2 focus:ring-blue-500 outline-none"
+                                    placeholder="Ej: Minera X">
+                            </div>
+                        </div>
+
+                        <div class="grid grid-cols-2 gap-3">
+                            <div>
+                                <label class="block text-xs font-bold text-gray-500 uppercase mb-1">Tipo de
+                                    Servicio</label>
+                                <select v-model="modalData.tipoService"
+                                    class="w-full p-3 border rounded-xl bg-white focus:ring-2 focus:ring-blue-500 outline-none">
+                                    <option value="Proyecto">Proyecto (Temporal)</option>
+                                    <option value="Operación">Operación (Continuo)</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="block text-xs font-bold text-gray-500 uppercase mb-1">Estado</label>
+                                <select v-model="modalData.estado"
+                                    class="w-full p-3 border rounded-xl bg-white focus:ring-2 focus:ring-blue-500 outline-none">
+                                    <option value="Activo">🟢 Activo</option>
+                                    <option value="En Espera">🟡 En Espera</option>
+                                    <option value="Finalizado">🔴 Finalizado</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <div class="grid grid-cols-2 gap-3">
+                            <div>
+                                <label class="block text-xs font-bold text-gray-500 uppercase mb-1">Inicio</label>
+                                <input type="date" v-model="modalData.fechaInicio"
+                                    class="w-full p-3 border rounded-xl bg-white focus:ring-2 focus:ring-blue-500 outline-none text-xs">
+                            </div>
+                            <div>
+                                <label class="block text-xs font-bold text-gray-500 uppercase mb-1">Cierre
+                                    Estimado</label>
+                                <input type="date" v-model="modalData.fechaFin"
+                                    class="w-full p-3 border rounded-xl bg-white focus:ring-2 focus:ring-blue-500 outline-none text-xs">
+                            </div>
+                        </div>
+
+                        <div>
+                            <label class="block text-xs font-bold text-gray-500 uppercase mb-1">Líder /
+                                Responsable</label>
+                            <input list="staff-list" v-model="modalData.responsable"
+                                class="w-full p-3 border rounded-xl bg-white focus:ring-2 focus:ring-blue-500 outline-none"
+                                placeholder="Seleccionar o escribir...">
+                            <datalist id="staff-list">
+                                <option v-for="s in staff" :value="s.nombre">{{ s.cargo }}</option>
+                            </datalist>
+                        </div>
+
+                        <div>
+                            <label class="block text-xs font-bold text-gray-500 uppercase mb-1">Descripción /
+                                Alcance</label>
+                            <textarea v-model="modalData.descripcion" rows="2"
+                                class="w-full p-3 border rounded-xl bg-white focus:ring-2 focus:ring-blue-500 outline-none text-xs"
+                                placeholder="Breve descripción del servicio..."></textarea>
+                        </div>
+                    </div>
+
+                    <!-- FORMULARIO GENÉRICO (Otros Casos) -->
+                    <div v-else class="space-y-3">
+                        <input v-if="modalData.nombre!==undefined" v-model="modalData.nombre"
+                            class="w-full p-3 border rounded-xl" placeholder="Nombre completo">
+                        <input v-if="modalData.cargo!==undefined" v-model="modalData.cargo"
+                            class="w-full p-3 border rounded-xl" placeholder="Cargo">
+                        <input v-if="modalData.dni!==undefined" v-model="modalData.dni"
+                            class="w-full p-3 border rounded-xl" placeholder="DNI">
+
+                        <!-- File Upload Input (only for staff) -->
+                        <div v-if="modalData.regimen !== undefined" class="mt-2">
+                            <label class="block text-xs font-bold text-gray-500 uppercase mb-1">Documento / CV</label>
+                            <input type="file" @change="handleFileUpload"
+                                class="w-full text-xs text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-xs file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100" />
+                            <div v-if="uploadPercentage > 0"
+                                class="mt-1 h-1 w-full bg-gray-100 rounded-full overflow-hidden">
+                                <div class="h-full bg-blue-500 transition-all" :style="{width: uploadPercentage + '%'}">
+                                </div>
+                            </div>
+                            <div v-if="modalData.fileUrl"
+                                class="mt-2 text-[10px] text-green-600 font-bold flex items-center gap-1">
+                                <i class="fas fa-check-circle"></i> ¡Archivo listo! Dale clic a "Guardar" para
+                                finalizar.
+                            </div>
+                        </div>
+
+                        <!-- CAMPOS DE REGIMEN (Solo visible si es Staff) -->
+                        <div v-if="modalData.regimen !== undefined" class="grid grid-cols-2 gap-3 pt-2 border-t">
+                            <div>
+                                <label class="block text-xs font-bold text-gray-500 uppercase mb-1">Régimen</label>
+                                <select v-model="modalData.regimen"
+                                    class="w-full p-3 border rounded-xl bg-white focus:ring-2 focus:ring-blue-500 outline-none text-xs">
+                                    <option value="Oficina (L-V)">Oficina (L-V)</option>
+                                    <option value="Sistema 14x7">Sistema 14x7</option>
+                                    <option value="Sistema 20x10">Sistema 20x10</option>
+                                    <option value="Sistema 10x10">Sistema 10x10</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="block text-xs font-bold text-gray-500 uppercase mb-1">Inicio Ciclo</label>
+                                <input type="date" v-model="modalData.inicioCiclo"
+                                    class="w-full p-3 border rounded-xl bg-white focus:ring-2 focus:ring-blue-500 outline-none text-xs">
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="flex gap-3 mt-6">
+                    <button @click="showGenericModal=false"
+                        class="flex-1 py-3 bg-gray-100 rounded-xl font-bold">Cancelar</button>
+                    <button @click="handleModalSubmit" :disabled="uploadPercentage > 0"
+                        :class="uploadPercentage > 0 ? 'bg-gray-300' : 'bg-blue-600 text-white'"
+                        class="flex-1 py-3 rounded-xl font-bold transition-all">
+                        <span v-if="uploadPercentage > 0">Subiendo {{ uploadPercentage }}%...</span>
+                        <span v-else>Guardar</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <script>
+        // --- FIREBASE CONFIGURATION ---
+        const firebaseConfig = {
+            apiKey: "AIzaSyANg7v5MYvgC1CFrTRCDgSAcw5dfWI4BM0",
+            authDomain: "proyecto-resiter.firebaseapp.com",
+            projectId: "proyecto-resiter",
+            storageBucket: "proyecto-resiter.firebasestorage.app",
+            messagingSenderId: "925799341130",
+            appId: "1:925799341130:web:0cdcaefe1a794f65d6dab3"
+        };
+        firebase.initializeApp(firebaseConfig);
+        const storage = firebase.storage();
+
+        // --- SUPABASE CONFIGURATION ---
+        const supabaseUrl = "https://yhtjyjzynpsxkqcfdjxu.supabase.co";
+        const supabaseKey = "sb_publishable_fSVd_DVRkUkisb0V5AE7Gw_whS_36Ff";
+        const supabaseClient = supabase.createClient(supabaseUrl, supabaseKey);
+
+        const { createApp, ref, computed, watch, onMounted } = Vue;
+
+        createApp({
+            setup() {
+                // --- UNIVERSAL DATA LOADER (DEEP SEARCH) ---
+                const tryLoad = (primaryKey, alternates) => {
+                    // Try primary
+                    let raw = localStorage.getItem(primaryKey);
+
+                    // Try alternates if empty
+                    if (!raw || raw === '[]') {
+                        for (const alt of alternates) {
+                            const val = localStorage.getItem(alt);
+                            if (val && val !== '[]') {
+                                console.log(`Recovered data from alternate key: ${alt}`);
+                                raw = val;
+                                break;
+                            }
+                        }
+                    }
+                    try { return JSON.parse(raw || '[]'); } catch { return []; }
+                };
+
+                const projects = ref(tryLoad('wepps_projects', ['projects', 'projectsData']));
+                const staff = ref(tryLoad('wepps_staff', ['staff', 'personal', 'workers', 'db_staff']));
+                const assets = ref(tryLoad('wepps_assets', ['assets', 'equipos', 'db_assets']));
+                const recoveryCount = ref(projects.value.length + staff.value.length + assets.value.length > 0 ? 0 : -1);
+
+                // FORCE DEEP SCAN METHOD
+                const forceDeepScan = () => {
+                    document.getElementById('recovery-overlay').style.display = 'flex';
+                    const log = document.getElementById('scan-log');
+                    const keys = Object.keys(localStorage);
+                    log.innerHTML = '';
+
+                    let foundP = [], foundS = [], foundA = [];
+
+                    keys.forEach(k => {
+                        try {
+                            const val = JSON.parse(localStorage.getItem(k));
+                            if (Array.isArray(val) && val.length > 0) {
+                                log.innerHTML += `<li>Found [${k}]: ${val.length} items</li>`;
+                                // Simple Heuristics
+                                if (val[0].cliente || val[0].tipo === 'Proyecto') foundP = [...foundP, ...val];
+                                else if (val[0].dni || val[0].cargo) foundS = [...foundS, ...val];
+                                else if (val[0].codigo || val[0].categoria) foundA = [...foundA, ...val];
+                            }
+                        } catch (e) { }
+                    });
+
+                    // Merge unique
+                    const merge = (target, source) => {
+                        const ids = new Set(target.value.map(x => x.id));
+                        let count = 0;
+                        source.forEach(x => {
+                            if (!x.id) x.id = '_' + Math.random();
+                            if (!ids.has(x.id)) {
+                                target.value.push(x);
+                                ids.add(x.id);
+                                count++;
+                            }
+                        });
+                        return count;
+                    };
+
+                    let totalRec = 0;
+                    totalRec += merge(projects, foundP);
+                    totalRec += merge(staff, foundS);
+                    totalRec += merge(assets, foundA);
+
+                    recoveryCount.value = totalRec;
+                    setTimeout(() => {
+                        document.getElementById('close-recovery').style.display = 'block';
+                        if (totalRec > 0) alert(`Se recuperaron ${totalRec} registros antiguos.`);
+                        else alert('Escaneo completo. No se encontraron otros datos ocultos.');
+                    }, 1000);
+                };
+
+                // Normal setup continues...
+                const currentTab = ref('dashboard');
+                const pageTitle = computed(() => useTitle(currentTab.value));
+                function useTitle(t) { if (t === 'dashboard') return 'Dashboard'; if (t === 'staff') return 'Directorio Personal'; if (t === 'projects') return 'Proyectos'; return 'Sistema'; }
+
+                // DATA PERSISTENCE
+                const save = () => {
+                    localStorage.setItem('wepps_projects', JSON.stringify(projects.value));
+                    localStorage.setItem('wepps_staff', JSON.stringify(staff.value));
+                    localStorage.setItem('wepps_assets', JSON.stringify(assets.value));
+                    // Removed global watcher to prevent critical freeze
+                };
+                // watch([projects, staff, assets], save, { deep: true }); // REMOVED
+
+                const getStaffCount = (pid) => staff.value.filter(s => s.projectId === pid).length;
+                const getAssetCount = (pid) => assets.value.filter(a => a.projectId === pid).length;
+                const getProjectName = (pid) => projects.value.find(p => p.id === pid)?.nombre || '';
+
+                const showProjectModal = ref(false);
+                const selectedProject = ref(null);
+                const projectTab = ref('planning');
+                const filterStatus = ref('todos');
+                const showGenericModal = ref(false);
+                const modalInfo = ref({});
+                const modalData = ref({});
+
+                const openAddProjectModal = () => {
+                    modalInfo.value = { title: 'Nuevo Proyecto', type: 'project', isEdit: false };
+                    modalData.value = {
+                        nombre: '', cliente: '', tipoService: 'Proyecto',
+                        fechaInicio: '', fechaFin: '', estado: 'Activo',
+                        responsable: '', descripcion: ''
+                    };
+                    showGenericModal.value = true;
+                };
+
+                const openEditProjectModal = (p) => {
+                    modalInfo.value = { title: 'Editar Proyecto', type: 'project', isEdit: true };
+                    modalData.value = { ...p };
+                    showGenericModal.value = true;
+                };
+
+                const openAddStaffModal = () => {
+                    modalInfo.value = { title: 'Nuevo Personal', type: 'staff', isEdit: false };
+                    modalData.value = {
+                        nombre: '', cargo: '', dni: '', projectId: '',
+                        regimen: 'Sistema 14x7', inicioCiclo: new Date().toISOString().slice(0, 10),
+                        fileUrl: ''
+                    };
+                    showGenericModal.value = true;
+                };
+
+                const openEditStaffModal = (s) => {
+                    console.log("DEBUG: Editando personal ->", s);
+                    modalInfo.value = { title: 'Editar Personal', type: 'staff', isEdit: true };
+                    // Ensure all fields are present to avoid reactivity issues with v-model
+                    modalData.value = {
+                        id: s.id,
+                        nombre: s.nombre || '',
+                        cargo: s.cargo || '',
+                        dni: s.dni || '',
+                        projectId: s.projectId || '',
+                        regimen: s.regimen || 'Sistema 14x7',
+                        inicioCiclo: s.inicioCiclo || new Date().toISOString().slice(0, 10),
+                        fileUrl: s.fileUrl || '',
+                        attendance: s.attendance || {},
+                        bono: s.bono || 0
+                    };
+                    showGenericModal.value = true;
+                };
+
+                const openAddAssetModal = () => {
+                    modalInfo.value = { title: 'Nuevo Activo', type: 'asset', isEdit: false };
+                    // Inicializamos con los campos requeridos
+                    modalData.value = { nombre: '', categoria: 'Herramienta Manual', codigo: '', projectId: '', estado: 'Disponible' };
+                    showGenericModal.value = true;
+                };
+
+                const openEditAssetModal = (asset) => {
+                    modalInfo.value = { title: 'Editar Activo', type: 'asset', isEdit: true };
+                    modalData.value = { ...asset }; // Copia profunda simple para no editar reactivamente en tiempo real
+                    showGenericModal.value = true;
+                };
+
+                const handleModalSubmit = () => {
+                    if (modalInfo.value.type === 'project') {
+                        if (modalInfo.value.isEdit && modalData.value.id) {
+                            const idx = projects.value.findIndex(x => x.id === modalData.value.id);
+                            if (idx !== -1) projects.value[idx] = { ...modalData.value };
+                        } else {
+                            projects.value.push({ id: Date.now().toString(), ...modalData.value });
+                        }
+                    }
+                    if (modalInfo.value.type === 'staff') {
+                        if (modalInfo.value.isEdit && modalData.value.id) {
+                            const idx = staff.value.findIndex(x => x.id === modalData.value.id);
+                            if (idx !== -1) {
+                                // Forced reactivity via splice
+                                staff.value.splice(idx, 1, { ...modalData.value });
+                            }
+                        } else {
+                            staff.value.push({ id: Date.now().toString(), ...modalData.value, attendance: {}, bono: 0 });
+                        }
+                    }
+
+                    if (modalInfo.value.type === 'asset') {
+                        if (modalInfo.value.isEdit && modalData.value.id) {
+                            // MODO EDICION
+                            const idx = assets.value.findIndex(x => x.id === modalData.value.id);
+                            if (idx !== -1) assets.value[idx] = { ...modalData.value };
+                        } else {
+                            // MODO NUEVO
+                            assets.value.push({ id: Date.now().toString(), ...modalData.value });
+                        }
+                    }
+                    save(); // EXPLICIT SAVE
+                    showGenericModal.value = false;
+                };
+
+                // Project Logic (Safe Mode)
+                const projectAssets = ref([]);
+
+                const refreshProjectAssets = () => {
+                    if (selectedProject.value) {
+                        // Copy data to avoid reactivity loops
+                        projectAssets.value = assets.value.filter(a => a.projectId === selectedProject.value.id).map(a => ({ ...a }));
+                    }
+                };
+
+                // --- FIREBASE FILE UPLOAD ---
+                const uploadPercentage = ref(0);
+                const handleFileUpload = async (event) => {
+                    const file = event.target.files[0];
+                    if (!file) return;
+
+                    // Reset URL to avoid confusion if retrying
+                    modalData.value = { ...modalData.value, fileUrl: '' };
+
+                    try {
+                        uploadPercentage.value = 1;
+                        const sanitizedName = file.name.replace(/[^a-zA-Z0-9.]/g, '_');
+                        const fileName = `${Date.now()}_${sanitizedName}`;
+                        const filePath = `staff/${fileName}`;
+
+                        console.log("DEBUG: Iniciando carga en Supabase...");
+
+                        const { data, error } = await supabaseClient.storage
+                            .from('staff-documents')
+                            .upload(filePath, file, {
+                                cacheControl: '3600',
+                                upsert: false,
+                                onUploadProgress: (progress) => {
+                                    const p = Math.round((progress.loaded / progress.total) * 100);
+                                    uploadPercentage.value = Math.max(1, p);
+                                    console.log("DEBUG: Progreso ->", p + "%");
+                                }
+                            });
+
+                        if (error) throw error;
+
+                        const { data: urlData } = supabaseClient.storage
+                            .from('staff-documents')
+                            .getPublicUrl(filePath);
+
+                        console.log("DEBUG: Carga exitosa ->", urlData.publicUrl);
+                        modalData.value = { ...modalData.value, fileUrl: urlData.publicUrl };
+                        uploadPercentage.value = 0;
+
+                    } catch (err) {
+                        console.error("DEBUG: Error inesperado ->", err);
+                        uploadPercentage.value = 0;
+                        alert("Error al subir: " + err.message);
+                    }
+                };
+
+
+
+                const downloadFile = async (item) => {
+                    if (!item.fileUrl) {
+                        alert("No hay archivo disponible para este trabajador.");
+                        return;
+                    }
+
+                    const sanitizedName = (item.nombre || 'documento').replace(/\s+/g, '_');
+                    const fileName = `SCTR_${sanitizedName}.pdf`;
+
+                    try {
+                        console.log("DEBUG: Intentando descarga directa via fetch...");
+                        const response = await fetch(item.fileUrl);
+                        if (!response.ok) throw new Error("Error en respuesta de red");
+
+                        const blob = await response.blob();
+                        saveAs(blob, fileName);
+                        console.log("DEBUG: Descarga exitosa con FileSaver.");
+                    } catch (err) {
+                        console.warn("DEBUG: Fallo fetch, usando link nativo:", err);
+                        // Fallback: Forzar apertura o descarga nativa del navegador
+                        const link = document.createElement('a');
+                        link.href = item.fileUrl;
+                        link.download = fileName;
+                        link.target = '_blank';
+                        document.body.appendChild(link);
+                        link.click();
+                        document.body.removeChild(link);
+                    }
+                };
+
+                const deleteFile = (item) => {
+                    if (confirm(`¿Está seguro de eliminar el documento de ${item.nombre}?`)) {
+                        item.fileUrl = '';
+                        save();
+                        alert("Documento eliminado de la ficha.");
+                    }
+                };
+
+                const updateAssetStatus = (assetCopy) => {
+                    // Sync local change to main DB
+                    const idx = assets.value.findIndex(a => a.id === assetCopy.id);
+                    if (idx !== -1) {
+                        assets.value[idx].estado = assetCopy.estado;
+                        save();
+                    }
+                };
+
+                const returnToWarehouse = (assetCopy) => {
+                    const idx = assets.value.findIndex(a => a.id === assetCopy.id);
+                    if (idx !== -1) {
+                        assets.value[idx].projectId = ''; // Remove from project
+                        assets.value[idx].estado = 'Disponible'; // Force Available
+                        save();
+                        refreshProjectAssets(); // Reload local list
+                    }
+                };
+
+                const deleteProject = (id) => { if (confirm('?')) { projects.value = projects.value.filter(x => x.id !== id); save(); } };
+                const deleteStaff = (id) => { if (confirm('?')) { staff.value = staff.value.filter(x => x.id !== id); save(); } };
+                const deleteAsset = (id) => { if (confirm('?')) { assets.value = assets.value.filter(x => x.id !== id); save(); } };
+
+                // Tareo
+                const daysInMonth = Array.from({ length: 31 }, (_, i) => i + 1);
+                const cycleAttendance = (w, d) => {
+                    const k = d.toString(); const sts = ['', 'X', 'F', 'D', 'V', 'DM'];
+                    let i = sts.indexOf(w.attendance[k] || '') + 1; if (i >= sts.length) i = 0;
+                    if (sts[i] === '') delete w.attendance[k]; else w.attendance[k] = sts[i];
+                    save(); // EXPLICIT SAVE
+                }
+                const getCellContent = (w, d) => w.attendance[d.toString()] || '';
+                const getCellClass = (w, d) => {
+                    const v = w.attendance[d.toString()];
+                    if (v === 'X') return 'bg-blue-100 text-blue-700 font-bold';
+                    if (v === 'F') return 'bg-red-100 text-red-700 font-bold';
+                    return 'bg-white';
+                };
+                const exportOfficialExcel = async () => {
+                    const wb = new ExcelJS.Workbook(); const ws = wb.addWorksheet('Tareo');
+                    const h = ['NOMBRE', 'CARGO', ...daysInMonth, 'BONO', 'OBS'];
+                    ws.addRow(h);
+                    filteredStaff.value.forEach(s => {
+                        const r = [s.nombre, s.cargo]; for (let i = 1; i <= 31; i++)r.push(s.attendance[i] || '');
+                        r.push(s.bono, s.obs); ws.addRow(r);
+                    });
+                    saveAs(new Blob([await wb.xlsx.writeBuffer()]), 'Tareo.xlsx');
+                };
+
+                const filteredStaff = computed(() => {
+                    if (!selectedProject.value) return [];
+                    let list = staff.value.filter(s => s.projectId === selectedProject.value.id);
+                    if (filterStatus.value !== 'todos') {
+                        list = list.filter(s => getLaborStatus(s).state === filterStatus.value);
+                    }
+                    return list;
+                });
+
+                onMounted(() => {
+                    // Try Auto Recovery Once
+                    if (projects.value.length === 0 && staff.value.length === 0) {
+                        tryLoad('projects', ['wepps_projects']);
+                    }
+                });
+
+                // --- LABOR REGIME LOGIC ---
+                const FERIADOS_PERU = ['01-01', '05-01', '06-29', '07-28', '07-29', '08-30', '10-08', '11-01', '12-08', '12-25'];
+
+                const calculateRunningBalance = (s, raw = false) => {
+                    // Start Balance check from beginning of time or fixed date? 
+                    // User implies total history manual count. 
+                    // We iterate ALL keys in attendance.
+
+                    if (s.regimen === 'Oficina (L-V)' || s.regimen === 'Lima 48h') return { balance: 0, status: 'manual' };
+
+                    let worked = 0;
+                    let rested = 0;
+
+                    if (s.attendance) {
+                        for (const dateStr in s.attendance) {
+                            const mark = s.attendance[dateStr];
+                            if (mark === 'X') worked++;
+                            else if (mark === 'D') rested++;
+                        }
+                    }
+
+                    const earned = worked * 0.5;
+                    const theoretical = earned - rested;
+
+                    if (raw) return { balance: theoretical, status: 'manual' };
+
+                    const finalBalance = theoretical + (parseFloat(s.balanceOffset) || 0);
+                    return { balance: finalBalance, status: 'manual' };
+                };
+
+                const editBalance = (s) => {
+                    const current = calculateRunningBalance(s).balance;
+                    const input = prompt(`Saldo Actual: ${current.toFixed(1)} días.\nIngrese nuevo saldo manual:`, current.toFixed(1));
+                    if (input !== null) {
+                        const newVal = parseFloat(input);
+                        if (!isNaN(newVal)) {
+                            // Calculate required offset: New = Theo + Offset => Offset = New - Theo
+                            const theoretical = calculateRunningBalance(s, true).balance;
+                            s.balanceOffset = newVal - theoretical;
+                            save();
+                        }
+                    }
+                };
+
+                const getLaborStatus = (s) => {
+                    if (!s.regimen) return { text: 'Sin Datos', color: 'bg-gray-100 text-gray-400', state: 'unknown' };
+
+                    // OFICINA LOGIC
+                    if (s.regimen === 'Oficina (L-V)') {
+                        const today = new Date();
+                        const day = today.getDay();
+                        const dateStr = today.toISOString().slice(5, 10);
+
+                        // Check explicit mark override FIRST
+                        const k = today.toISOString().slice(0, 10);
+                        if (s.attendance && s.attendance[k] === 'X') return { text: '🔴 EN OFICINA (Manual)', color: 'bg-red-100 text-red-700', state: 'en_mina', balance: 0 };
+                        if (s.attendance && s.attendance[k] === 'D') return { text: '🟠 DESC. MANUAL', color: 'bg-orange-100 text-orange-700', state: 'descanso', balance: 0 };
+
+                        if (FERIADOS_PERU.includes(dateStr)) return { text: '🎉 FERIADO', color: 'bg-purple-100 text-purple-700', state: 'descanso', balance: 0 };
+                        if (day === 0 || day === 6) return { text: '🏠 DESC. SEMANAL', color: 'bg-green-100 text-green-700', state: 'descanso', balance: 0 };
+                        return { text: '🏢 EN OFICINA', color: 'bg-blue-100 text-blue-700', state: 'en_mina', balance: 0 };
+                    }
+
+                    // MINA LOGIC
+                    const { balance } = calculateRunningBalance(s);
+                    const todayStr = new Date().toISOString().slice(0, 10);
+                    const todayMark = s.attendance ? s.attendance[todayStr] : null;
+
+                    if (todayMark === 'X') {
+                        return { text: '🔴 EN MINA', color: 'bg-red-100 text-red-700', state: 'en_mina', balance };
+                    } else if (todayMark === 'D') {
+                        return { text: '🟠 EN DESCANSO', color: 'bg-orange-100 text-orange-700', state: 'descanso', balance };
+                    } else {
+                        // Strict 0 check (with float tolerance)
+                        if (balance > 0.01) {
+                            return { text: '🟠 EN DESCANSO', color: 'bg-orange-100 text-orange-700', state: 'descanso', balance };
+                        } else {
+                            return { text: '🟢 DISPONIBLE', color: 'bg-green-100 text-green-700', state: 'disponible', balance };
+                        }
+                    }
+                };
+
+                const getNextRosterChange = (s) => {
+                    const st = getLaborStatus(s);
+                    if (st.balance > 0.01) return `Saldo: ${st.balance.toFixed(1)} días`;
+                    return 'Saldo: 0.0 días';
+                };
+
+                // Project Dashboard Logic
+                const projectProgress = computed(() => {
+                    if (!selectedProject.value || !selectedProject.value.activities || selectedProject.value.activities.length === 0) return 0;
+                    const total = selectedProject.value.activities.reduce((sum, act) => sum + (parseInt(act.progress) || 0), 0);
+                    return Math.round(total / selectedProject.value.activities.length);
+                });
+
+                const addActivity = () => {
+                    if (!selectedProject.value.activities) selectedProject.value.activities = [];
+                    selectedProject.value.activities.push({ name: '', start: '', end: '', status: 'Pendiente', progress: 0 });
+                    save();
+                };
+
+                const removeActivity = (idx) => {
+                    selectedProject.value.activities.splice(idx, 1);
+                    save();
+                };
+
+                const saveProject = () => { save(); }; // Alias for template clarity on inputs
+
+                const openProjectModal = (p) => {
+                    selectedProject.value = p;
+                    if (!selectedProject.value.activities) selectedProject.value.activities = [];
+                    projectTab.value = 'planning';
+                    refreshProjectAssets();
+                    showProjectModal.value = true;
+                };
+
+                // --- R.A.I. INTEGRATION ---
+                const showChat = ref(false);
+                const showConfig = ref(false);
+                const apiKey = ref(localStorage.getItem('gemini_api_key') || '');
+                const selectedModel = ref(localStorage.getItem('gemini_model') || 'gemini-1.5-flash');
+                const availableModels = ref([
+                    { id: 'gemini-1.5-flash', name: 'Gemini 1.5 Flash (Default)' },
+                    { id: 'gemini-1.5-pro', name: 'Gemini 1.5 Pro' },
+                    { id: 'gemini-pro', name: 'Gemini Pro (Legacy)' }
+                ]);
+                const chatInput = ref('');
+                const messages = ref([{ role: 'model', text: 'Hola, soy R.A.I. ¿En qué puedo ayudarte hoy con la gestión?' }]);
+                const isThinking = ref(false);
+
+                const saveApiKey = () => {
+                    localStorage.setItem('gemini_api_key', apiKey.value);
+                    localStorage.setItem('gemini_model', selectedModel.value);
+                    showConfig.value = false;
+                    fetchAvailableModels(false); // Validate and refresh on save
+                };
+
+                const fetchAvailableModels = async (silent = false) => {
+                    if (!apiKey.value) {
+                        if (!silent) alert('Por favor, ingresa tu API Key primero.');
+                        return;
+                    }
+
+                    try {
+                        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey.value}`);
+                        const data = await response.json();
+
+                        if (data.error) throw new Error(data.error.message);
+                        if (data.models) {
+                            availableModels.value = data.models
+                                .filter(m => m.supportedGenerationMethods && m.supportedGenerationMethods.includes('generateContent'))
+                                .map(m => ({
+                                    id: m.name.replace('models/', ''),
+                                    name: m.displayName || m.name
+                                }));
+
+                            // Auto-select first if current is invalid
+                            const currentExists = availableModels.value.find(m => m.id === selectedModel.value);
+                            if (!currentExists && availableModels.value.length > 0) {
+                                selectedModel.value = availableModels.value[0].id;
+                            }
+
+                            if (!silent) {
+                                if (availableModels.value.length > 0) {
+                                    alert(`¡Conexión Exitosa! Se encontraron ${availableModels.value.length} modelos compatibles.`);
+                                } else {
+                                    alert('No se encontraron modelos compatibles con generación de texto.');
+                                }
+                            }
+                        }
+                    } catch (error) {
+                        if (!silent) alert('Error al buscar modelos: ' + error.message);
+                    }
+                };
+
+                // Auto-fetch on init
+                if (apiKey.value) fetchAvailableModels(true);
+
+                const toggleChat = () => { showChat.value = !showChat.value; };
+
+                const construirContexto = () => {
+                    // Create succinct context
+                    const context = {
+                        personal: staff.value.map(s => ({
+                            nombre: s.nombre, cargo: s.cargo, regimen: s.regimen,
+                            proyecto: getProjectName(s.projectId) || 'Sin Asignar',
+                            estado_actual: getLaborStatus(s).text
+                        })),
+                        proyectos: projects.value.map(p => ({
+                            nombre: p.nombre, cliente: p.cliente,
+                            avance: p.activities ? Math.round(p.activities.reduce((a, b) => a + (parseInt(b.progress) || 0), 0) / p.activities.length) + '%' : '0%'
+                        })),
+                        activos: assets.value.map(a => ({
+                            nombre: a.nombre, estado: a.estado,
+                            ubicacion: a.projectId ? getProjectName(a.projectId) : 'Almacén Central',
+                            codigo: a.codigo
+                        }))
+                    };
+                    return JSON.stringify(context);
+                };
+
+                const speakResponse = (text) => {
+                    if ('speechSynthesis' in window) {
+                        const utterance = new SpeechSynthesisUtterance(text);
+                        utterance.lang = 'es-ES';
+                        utterance.rate = 1.1;
+                        window.speechSynthesis.speak(utterance);
+                    }
+                };
+
+                const sendToGemini = async () => {
+                    if (!chatInput.value.trim()) return;
+                    if (!apiKey.value) { showConfig.value = true; return; }
+
+                    const userText = chatInput.value;
+                    messages.value.push({ role: 'user', text: userText });
+                    chatInput.value = '';
+                    isThinking.value = true;
+
+                    // Scroll down
+                    setTimeout(() => { const el = document.getElementById('chat-box'); if (el) el.scrollTop = el.scrollHeight; }, 100);
+
+                    const contextData = construirContexto();
+                    const systemPrompt = `Eres R.A.I., el asistente operativo de Resiter. Tienes acceso a estos datos reales: ${contextData}. Responde brevemente basándote en ellos.`;
+
+                    try {
+                        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${selectedModel.value}:generateContent?key=${apiKey.value}`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                contents: [{
+                                    parts: [
+                                        { text: systemPrompt },
+                                        { text: "Pregunta del usuario: " + userText }
+                                    ]
+                                }]
+                            })
+                        });
+
+                        const data = await response.json();
+                        if (data.error) throw new Error(data.error.message);
+
+                        const aiText = data.candidates[0].content.parts[0].text;
+                        messages.value.push({ role: 'model', text: aiText });
+                        speakResponse(aiText);
+
+                    } catch (error) {
+                        messages.value.push({ role: 'model', text: 'Error de conexión: ' + error.message });
+                    } finally {
+                        isThinking.value = false;
+                        setTimeout(() => { const el = document.getElementById('chat-box'); if (el) el.scrollTop = el.scrollHeight; }, 100);
+                    }
+                };
+
+                // --- CALENDAR & BALANCE LOGIC ---
+                const showBalanceModal = ref(false);
+                const selectedStaffForBalance = ref(null);
+                const currentDate = ref(new Date());
+                const rangeStart = ref('');
+                const rangeEnd = ref('');
+
+                const currentMonth = computed(() => currentDate.value.getMonth());
+                const currentYear = computed(() => currentDate.value.getFullYear());
+                const monthName = computed(() => currentDate.value.toLocaleString('es-ES', { month: 'long' }).toUpperCase());
+
+                const balanceValue = computed(() => {
+                    if (!selectedStaffForBalance.value) return 0;
+                    const { balance } = calculateRunningBalance(selectedStaffForBalance.value);
+                    return balance.toFixed(1);
+                });
+
+                const openBalanceModal = (s) => {
+                    selectedStaffForBalance.value = s;
+                    currentDate.value = new Date();
+                    showBalanceModal.value = true;
+                };
+
+                const closeBalanceModal = () => {
+                    showBalanceModal.value = false;
+                    selectedStaffForBalance.value = null;
+                };
+
+                const changeMonth = (delta) => {
+                    const newDate = new Date(currentDate.value);
+                    newDate.setMonth(newDate.getMonth() + delta);
+                    currentDate.value = newDate;
+                };
+
+                const getDateString = (date) => date.toISOString().slice(0, 10);
+
+                const calendarDays = computed(() => {
+                    const year = currentYear.value;
+                    const month = currentMonth.value;
+
+                    const firstDayOfMonth = new Date(year, month, 1);
+                    const lastDayOfMonth = new Date(year, month + 1, 0);
+
+                    let startDay = firstDayOfMonth.getDay() - 1;
+                    if (startDay === -1) startDay = 6;
+
+                    const days = [];
+
+                    const prevMonthLastDay = new Date(year, month, 0).getDate();
+                    for (let i = startDay - 1; i >= 0; i--) {
+                        const d = new Date(year, month - 1, prevMonthLastDay - i);
+                        days.push({ day: d.getDate(), date: getDateString(d), isCurrentMonth: false });
+                    }
+
+                    for (let i = 1; i <= lastDayOfMonth.getDate(); i++) {
+                        const d = new Date(year, month, i);
+                        days.push({ day: i, date: getDateString(d), isCurrentMonth: true });
+                    }
+
+                    const remaining = 42 - days.length;
+                    for (let i = 1; i <= remaining; i++) {
+                        const d = new Date(year, month + 1, i);
+                        days.push({ day: i, date: getDateString(d), isCurrentMonth: false });
+                    }
+
+                    return days.map(d => {
+                        const mmdd = d.date.slice(5);
+                        const isHoliday = FERIADOS_PERU.includes(mmdd);
+                        const status = selectedStaffForBalance.value?.attendance?.[d.date] || '';
+                        return { ...d, isHoliday, holidayName: isHoliday ? 'Feriado' : '', status };
+                    });
+                });
+
+                const applyRange = (status) => {
+                    if (!rangeStart.value || !rangeEnd.value || !selectedStaffForBalance.value) return;
+
+                    const start = new Date(rangeStart.value);
+                    const end = new Date(rangeEnd.value);
+                    if (start > end) { alert('Fecha inicio debe ser menor a fin'); return; }
+
+                    const current = new Date(start);
+                    while (current <= end) {
+                        const k = getDateString(current);
+                        if (!selectedStaffForBalance.value.attendance) selectedStaffForBalance.value.attendance = {};
+                        selectedStaffForBalance.value.attendance[k] = status;
+                        current.setDate(current.getDate() + 1);
+                    }
+                    save();
+                    alert('Rango Aplicado');
+                };
+
+                const toggleDayStatus = (d) => {
+                    if (!selectedStaffForBalance.value) return;
+                    if (!selectedStaffForBalance.value.attendance) selectedStaffForBalance.value.attendance = {};
+
+                    const k = d.date;
+                    const curr = selectedStaffForBalance.value.attendance[k];
+
+                    // Binary Toggle Logic: Empty -> X, X -> D, D -> X
+                    let nextState = 'X';
+                    if (curr === 'X') nextState = 'D';
+                    else if (curr === 'D') nextState = 'X';
+
+                    selectedStaffForBalance.value.attendance[k] = nextState;
+                    save();
+                };
+
+                return {
+                    projects, staff, assets, forceDeepScan, recoveryCount,
+                    currentTab, pageTitle, toggleSidebar: () => { },
+                    showProjectModal, showGenericModal, selectedProject, projectTab,
+                    modalInfo, modalData, openAddProjectModal, openAddStaffModal, openEditStaffModal, openAddAssetModal, handleModalSubmit,
+                    openProjectModal, deleteProject, deleteStaff, deleteAsset,
+                    getStaffCount, getAssetCount, getProjectName,
+                    filteredStaff, daysInMonth, cycleAttendance, getCellContent, getCellClass, exportOfficialExcel, openEditAssetModal, save,
+                    projectAssets, returnToWarehouse, openEditProjectModal, getLaborStatus, getNextRosterChange,
+                    projectProgress, addActivity, removeActivity, saveProject, updateAssetStatus, filterStatus, editBalance,
+                    handleFileUpload, uploadPercentage, downloadFile, deleteFile,
+                    // RAI
+                    showChat, showConfig, apiKey, selectedModel, availableModels, chatInput, messages, isThinking,
+                    saveApiKey, fetchAvailableModels, toggleChat, sendToGemini,
+                    // CALENDAR
+                    showBalanceModal, selectedStaffForBalance, openBalanceModal, closeBalanceModal,
+                    calendarDays, monthName, currentYear, changeMonth, rangeStart, rangeEnd, applyRange, toggleDayStatus, balanceValue
+                };
+            }
+        }).mount('#app');
+    </script>
+</body>
+
+</html>
